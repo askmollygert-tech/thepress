@@ -17,7 +17,7 @@ A friendly, banter-heavy golf scoring app for organising rounds, entering daily 
 ## Tech stack
 
 - React / TypeScript
-- Vinext and Vite
+- Next.js
 - Tailwind CSS
 - Supabase (authentication and PostgreSQL)
 
