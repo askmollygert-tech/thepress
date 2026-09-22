@@ -181,6 +181,7 @@ export default function Home() {
   const [roundInvites, setRoundInvites] = useState<Array<{profile_id:string; invite_token:string; invitation_status:string}>>([]);
   const [roundInviteToken, setRoundInviteToken] = useState("");
   const [currentUserId, setCurrentUserId] = useState("");
+  const [currentProfileId, setCurrentProfileId] = useState("");
   const [scorecardPhoto, setScorecardPhoto] = useState("");
   const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
   const [authName, setAuthName] = useState("");
@@ -241,6 +242,7 @@ export default function Home() {
       try {
         const p = await getMyProfile();
         setCurrentUserId(p.auth_user_id || "");
+        setCurrentProfileId(p.id || "");
         setMembershipStatus(p.membership_status || "pending");
         setIsAdmin(Boolean(p.is_admin));
         if (p.is_admin) {
@@ -322,7 +324,7 @@ export default function Home() {
   }, [userEmail, membershipStatus]);
   useEffect(() => {
     if (!userEmail || friendSearch.trim().length < 2) {
-      setFriendResults(suggestedGolfers);
+      setFriendResults(userEmail ? [] : suggestedGolfers);
       return;
     }
     const timer = setTimeout(() => {
@@ -661,7 +663,7 @@ export default function Home() {
               <span>{af ? "EN" : "AF"}</span>
             </button>
             <button
-              onClick={() => setScreen("profile")}
+              onClick={() => { setProfileTab("me"); setScreen("profile"); }}
               className="avatar"
               aria-label={af ? "Maak golferprofiel oop" : "Open golfer profile"}
             >
@@ -1214,9 +1216,9 @@ export default function Home() {
           </button>
           <p className="eyebrow">
             <Users />{" "}
-            {af ? "Jou klubhuis-identiteit" : "Your clubhouse identity"}
+            {profileTab === "friends" ? (af ? "Jou golfkring" : "Your golf circle") : (af ? "Jou klubhuis-identiteit" : "Your clubhouse identity")}
           </p>
-          <h1 className="setup-title">{af ? "MY PROFIEL" : "MY PROFILE"}</h1>
+          <h1 className="setup-title">{profileTab === "friends" ? (af ? "MY VRIENDE" : "MY FRIENDS") : (af ? "MY PROFIEL" : "MY PROFILE")}</h1>
           {userEmail && membershipStatus === "pending" && (
             <div className="connection-card">
               <Sparkles />
@@ -1331,6 +1333,7 @@ export default function Home() {
             </div>
           ) : (
             <div className="friends-panel">
+              <button className="friend-invite" onClick={() => shareRegistrationInvite()}><UserPlus />{af ? "NOOI ’N NUWE SPELER VIA WHATSAPP" : "INVITE A NEW PLAYER VIA WHATSAPP"}</button>
               {incomingRequests.length > 0 && <div className="request-notifications">
                 <p className="friends-label">{af ? "NUWE VRIENDVERSOEKE" : "NEW FRIEND REQUESTS"}</p>
                 {incomingRequests.map((request) => <article className="friend-card" key={request.id}>
@@ -1339,6 +1342,19 @@ export default function Home() {
                   <div className="request-actions"><button onClick={() => void answerRequest(request.id, true)}><UserCheck />{af ? "AANVAAR" : "ACCEPT"}</button><button className="ignore" onClick={() => void answerRequest(request.id, false)}>{af ? "IGNOREER" : "IGNORE"}</button></div>
                 </article>)}
               </div>}
+              <p className="friends-label">{af ? "JOU VRIENDE" : "YOUR FRIENDS"}</p>
+              <div className="friend-list">
+                {registeredGolfers.filter((golfer) => golfer.id !== currentProfileId).length === 0 ? (
+                  <p className="empty-friends">{af ? "Nog geen vriende nie. Soek ’n geregistreerde golfer hieronder, of nooi iemand via WhatsApp." : "No friends yet. Search for a registered golfer below, or invite someone via WhatsApp."}</p>
+                ) : registeredGolfers.filter((golfer) => golfer.id !== currentProfileId).map((golfer) => (
+                  <article className="friend-card" key={golfer.id}>
+                    <div className="friend-avatar">{golfer.display_name.slice(0,2).toUpperCase()}</div>
+                    <div><h3>{golfer.display_name}</h3><p>{golfer.nickname ? `“${golfer.nickname}” · ` : ""}{golfer.home_club || (af ? "Klub onbekend" : "Club unknown")}</p></div>
+                    <span className="friend-status"><UserCheck />{af ? "VRIEND" : "FRIEND"}</span>
+                  </article>
+                ))}
+              </div>
+              <p className="friends-label">{af ? "SOEK GEREGISTREERDE SPELERS" : "SEARCH REGISTERED PLAYERS"}</p>
               <div className="friend-search">
                 <Search />
                 <input
@@ -1352,10 +1368,10 @@ export default function Home() {
                 />
               </div>
               <p className="friends-label">
-                {af ? "GOLFERS WAT JY DALK KEN" : "GOLFERS YOU MAY KNOW"}
+                {friendSearch.trim().length >= 2 ? (af ? "SOEKRESULTATE" : "SEARCH RESULTS") : (af ? "TIK MINSTENS TWEE LETTERS" : "TYPE AT LEAST TWO LETTERS")}
               </p>
               <div className="friend-list">
-                {friendResults.map((g) => (
+                {friendResults.filter((g) => g.id !== currentProfileId && !registeredGolfers.some((friend) => friend.id === g.id)).map((g) => (
                     <article className="friend-card" key={g.id}>
                       <div className="friend-avatar">{g.initials}</div>
                       <div>
@@ -1483,6 +1499,14 @@ export default function Home() {
         >
           <History />
           {af ? "Geskiedenis" : "History"}
+        </button>
+        <button
+          onClick={() => { setProfileTab("friends"); setScreen("profile"); }}
+          className={screen === "profile" && profileTab === "friends" ? "active" : ""}
+        >
+          <Users />
+          {af ? "Vriende" : "Friends"}
+          {incomingRequests.length > 0 && <span className="nav-badge">{incomingRequests.length}</span>}
         </button>
         <button>
           <Trophy />
