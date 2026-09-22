@@ -41,6 +41,17 @@ export async function getPendingGolfers() {
   return data;
 }
 
+export async function getApprovedGolfers() {
+  const { data, error } = await client().from("profiles")
+    .select("id,display_name,nickname,home_club,preferred_playing_handicap")
+    .eq("membership_status", "approved")
+    .eq("is_guest", false)
+    .order("display_name", { ascending: true })
+    .limit(100);
+  if (error) throw error;
+  return data;
+}
+
 export async function approveGolfer(profileId: string) {
   const { data, error } = await client().rpc("approve_golfer", { profile_to_approve: profileId });
   if (error) throw error;
