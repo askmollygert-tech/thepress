@@ -501,6 +501,14 @@ export default function Home() {
     const message = af ? `Hallo ${name}! Jy is genooi na ’n rondte op The Press. ${needsRegistration ? "Registreer eers en " : ""}klik hier om die spel te aanvaar: ${base}` : `Hi ${name}! You are invited to a round on The Press. ${needsRegistration ? "Register first and " : ""}click here to accept the game: ${base}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, "_blank");
   };
+  const shareRegistrationInvite = (name = "") => {
+    const registrationUrl = `${window.location.origin}/?register=1`;
+    const greeting = name.trim() ? ` ${name.trim()}` : "";
+    const message = af
+      ? `Hallo${greeting}! Kom sluit aan by The Press sodat ons jou by ons golf-rondtes kan voeg. Registreer hier: ${registrationUrl}`
+      : `Hi${greeting}! Join The Press so we can add you to our golf rounds. Register here: ${registrationUrl}`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, "_blank");
+  };
   const inviteNewPlayer = async () => {
     if (!activeRound) return;
     const name = window.prompt(af ? "Wat is die nuwe speler se naam?" : "What is the new player’s name?");
@@ -560,6 +568,11 @@ export default function Home() {
     setCurrentHole(order[Math.max(0, index - 1)] - 1);
   };
   const choosePlayer = (playerId: number, value: string) => {
+    if (value === "invite") {
+      const player = players.find((item) => item.id === playerId);
+      shareRegistrationInvite(player?.isGuest ? player.name : "");
+      return;
+    }
     if (value === "guest") {
       setPlayers((old) => old.map((player) => player.id === playerId ? {
         ...player,
@@ -840,7 +853,8 @@ export default function Home() {
                     <span className={`team t${p.team}`}>{p.team}</span>
                     <div className="player-choice">
                       <select value={p.isGuest ? "guest" : p.profileId} onChange={(e) => choosePlayer(p.id, e.target.value)}>
-                        <option value="guest">{af ? "Gas sonder profiel" : "Guest without profile"}</option>
+                        <option value="guest">{af ? "Voeg gas by" : "Add guest"}</option>
+                        <option value="invite">{af ? "+ Nooi nuwe speler via WhatsApp" : "+ Invite new player via WhatsApp"}</option>
                         {registeredGolfers.map((golfer) => <option key={golfer.id} value={golfer.id} disabled={players.some((other) => other.id !== p.id && other.profileId === golfer.id)}>{golfer.display_name}{golfer.nickname ? ` · ${golfer.nickname}` : ""}</option>)}
                       </select>
                       {p.isGuest ? <input value={p.name} onFocus={(e) => e.currentTarget.select()} onChange={(e) => setPlayers(players.map((x) => x.id === p.id ? { ...x, name: e.target.value } : x))} placeholder={af ? "Gas se naam" : "Guest name"} /> : <small>{af ? "GOEDGEKEURDE SPELER" : "APPROVED PLAYER"}</small>}
