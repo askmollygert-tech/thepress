@@ -1073,6 +1073,11 @@ nav button.active {
   font-weight: 800;
   text-align: center;
 }
+.auth-gate{background:radial-gradient(circle at 50% 0,#1e4d36 0,#081611 52%)}
+.auth-home{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(340px,480px);gap:clamp(28px,6vw,80px);align-items:center;width:min(1100px,calc(100% - 32px));min-height:calc(100dvh - 86px);margin:auto;padding:46px 0 90px}
+.auth-welcome h1{margin:18px 0 12px;font-family:Impact,"Arial Narrow",sans-serif;font-size:clamp(72px,12vw,132px);line-height:.82;letter-spacing:-.04em}.auth-welcome h1 em{display:block;color:var(--lime);font-style:normal}.auth-welcome>p:last-child{max-width:580px;color:#ffffffa0;font-size:18px;line-height:1.6}.login-card{box-shadow:0 28px 90px #0008}.auth-note{margin:12px 0 0;color:#ffffff68;font-size:13px;line-height:1.45;text-align:center}.waiting-card h2{margin:16px 0 8px;font-size:30px}.waiting-card>p:not(.eyebrow){color:#ffffff80;line-height:1.6}.waiting-card button{width:100%;margin-top:16px;background:var(--lime);color:#071511;font-weight:950}
+.player-choice{display:grid;gap:7px;min-width:0}.player-choice select,.player-choice input{width:100%;min-width:0;padding:12px;border:1px solid #ffffff1c;border-radius:11px;outline:0;background:#10271f;color:white}.player-choice select:focus,.player-choice input:focus{border-color:var(--lime)}.player-choice small{color:var(--lime);font-size:10px;font-weight:900;letter-spacing:.08em}
+@media(max-width:760px){.auth-home{grid-template-columns:1fr;align-content:center;padding-top:28px}.auth-welcome h1{font-size:72px}.auth-welcome>p:last-child{font-size:15px}.auth-gate .header-inner{padding-inline:16px}}
 .header-actions {
   display: flex;
   align-items: center;
