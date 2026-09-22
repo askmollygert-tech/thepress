@@ -251,7 +251,14 @@ export default function Home() {
           const friendData = await getFriendData();
           const profiles = friendData.profiles as RegisteredGolfer[];
           const acceptedIds = new Set(friendData.links.filter((link: any) => link.status === "accepted").map((link: any) => link.requester_id === friendData.me ? link.addressee_id : link.requester_id));
-          setRegisteredGolfers(profiles.filter((golfer) => acceptedIds.has(golfer.id)));
+          const me: RegisteredGolfer = {
+            id: p.id,
+            display_name: p.display_name,
+            nickname: p.nickname,
+            home_club: p.home_club,
+            preferred_playing_handicap: p.preferred_playing_handicap,
+          };
+          setRegisteredGolfers([me, ...profiles.filter((golfer) => acceptedIds.has(golfer.id) && golfer.id !== me.id)]);
           setIncomingRequests(friendData.links.filter((link: any) => link.status === "pending" && link.addressee_id === friendData.me).map((link: any) => ({ id: link.id, golfer: profiles.find((golfer) => golfer.id === link.requester_id) })).filter((item: any) => item.golfer));
           const openRound = await getMyActiveRound();
           if (openRound) {
@@ -262,13 +269,22 @@ export default function Home() {
             setFormat(openRound.format);
             setPlayers((openRound.round_players || []).map((row: any, index: number) => ({ id: index + 1, name: row.profiles?.display_name || `Gas ${index + 1}`, handicap: row.playing_handicap, team: row.team, profileId: row.profile_id, isGuest: Boolean(row.profiles?.is_guest) })));
           }
-          if (!openRound) setPlayers((old) => old.map((player, index) => index === 0 && player.isGuest ? {
-            ...player,
-            name: p.display_name,
-            profileId: p.id,
-            isGuest: false,
-            handicap: p.preferred_playing_handicap ?? player.handicap,
-          } : player));
+          if (!openRound) setPlayers((old) => old.map((player, index) => {
+            if (index === 0) return {
+              ...player,
+              name: p.display_name,
+              profileId: p.id,
+              isGuest: false,
+              handicap: p.preferred_playing_handicap ?? player.handicap,
+            };
+            if (player.profileId === p.id) return {
+              ...player,
+              name: af ? `Gas ${player.id}` : `Guest ${player.id}`,
+              profileId: undefined,
+              isGuest: true,
+            };
+            return player;
+          }));
         }
         setMyProfile((old) => ({
           name: p.display_name || old.name,
@@ -294,7 +310,11 @@ export default function Home() {
       void getFriendData().then((data) => {
         const profiles = data.profiles as RegisteredGolfer[];
         const acceptedIds = new Set(data.links.filter((link: any) => link.status === "accepted").map((link: any) => link.requester_id === data.me ? link.addressee_id : link.requester_id));
-        setRegisteredGolfers(profiles.filter((golfer) => acceptedIds.has(golfer.id)));
+        const friends = profiles.filter((golfer) => acceptedIds.has(golfer.id));
+        setRegisteredGolfers((current) => {
+          const me = current.find((golfer) => golfer.id === data.me);
+          return me ? [me, ...friends.filter((golfer) => golfer.id !== me.id)] : friends;
+        });
         setIncomingRequests(data.links.filter((link: any) => link.status === "pending" && link.addressee_id === data.me).map((link: any) => ({ id: link.id, golfer: profiles.find((golfer) => golfer.id === link.requester_id) })).filter((item: any) => item.golfer));
       }).catch(() => {});
     }, 12000);
