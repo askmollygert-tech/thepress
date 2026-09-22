@@ -30,6 +30,7 @@ import {
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 import {
   approveGolfer,
+  getApprovedGolfers,
   getMyProfile,
   getPendingGolfers,
   searchGolfers,
@@ -40,7 +41,7 @@ import {
   updateMyProfile,
 } from "@/lib/press-data";
 
-type Player = { id: number; name: string; handicap: number; team: "A" | "B" };
+type Player = { id: number; name: string; handicap: number; team: "A" | "B"; profileId?: string; isGuest: boolean };
 type Language = "af" | "en";
 type SocialProfile = {
   name: string;
@@ -62,11 +63,18 @@ type PendingGolfer = {
   email: string;
   home_club?: string | null;
 };
+type RegisteredGolfer = {
+  id: string;
+  display_name: string;
+  nickname?: string | null;
+  home_club?: string | null;
+  preferred_playing_handicap?: number | null;
+};
 const defaultPlayers: Player[] = [
-  { id: 1, name: "Golfer 1", handicap: 0, team: "A" },
-  { id: 2, name: "Golfer 2", handicap: 0, team: "A" },
-  { id: 3, name: "Golfer 3", handicap: 0, team: "B" },
-  { id: 4, name: "Golfer 4", handicap: 0, team: "B" },
+  { id: 1, name: "Gas 1", handicap: 0, team: "A", isGuest: true },
+  { id: 2, name: "Gas 2", handicap: 0, team: "A", isGuest: true },
+  { id: 3, name: "Gas 3", handicap: 0, team: "B", isGuest: true },
+  { id: 4, name: "Gas 4", handicap: 0, team: "B", isGuest: true },
 ];
 const pars = [4, 4, 3, 5, 4, 4, 5, 3, 4, 4, 5, 4, 3, 4, 4, 5, 3, 4];
 const indexes = [7, 3, 15, 1, 11, 5, 17, 13, 9, 8, 4, 12, 16, 2, 10, 6, 18, 14];
@@ -152,9 +160,11 @@ export default function Home() {
   const [presses, setPresses] = useState<number[]>([]);
   const [toast, setToast] = useState("");
   const [userEmail, setUserEmail] = useState("");
+  const [authReady, setAuthReady] = useState(false);
   const [membershipStatus, setMembershipStatus] = useState("guest");
   const [isAdmin, setIsAdmin] = useState(false);
   const [pendingGolfers, setPendingGolfers] = useState<PendingGolfer[]>([]);
+  const [registeredGolfers, setRegisteredGolfers] = useState<RegisteredGolfer[]>([]);
   const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
   const [authName, setAuthName] = useState("");
   const [authEmail, setAuthEmail] = useState("");
@@ -177,7 +187,10 @@ export default function Home() {
     if (saved) {
       try {
         const data = JSON.parse(saved);
-        if (data.players) setPlayers(data.players);
+        if (data.players) setPlayers(data.players.map((player: Player) => ({
+          ...player,
+          isGuest: player.isGuest ?? !player.profileId,
+        })));
         if (data.language) setLanguage(data.language);
         if (data.myProfile) setMyProfile(data.myProfile);
         if (data.friendRequests) setFriendRequests(data.friendRequests);
@@ -196,7 +209,12 @@ export default function Home() {
     if (!supabase) return;
     const load = async (email: string) => {
       setUserEmail(email);
-      if (!email) return;
+      if (!email) {
+        setMembershipStatus("guest");
+        setIsAdmin(false);
+        setAuthReady(true);
+        return;
+      }
       try {
         const p = await getMyProfile();
         setMembershipStatus(p.membership_status || "pending");
@@ -204,6 +222,17 @@ export default function Home() {
         if (p.is_admin) {
           const requests = await getPendingGolfers();
           setPendingGolfers(requests as PendingGolfer[]);
+        }
+        if (p.membership_status === "approved") {
+          const golfers = await getApprovedGolfers();
+          setRegisteredGolfers(golfers as RegisteredGolfer[]);
+          setPlayers((old) => old.map((player, index) => index === 0 && player.isGuest ? {
+            ...player,
+            name: p.display_name,
+            profileId: p.id,
+            isGuest: false,
+            handicap: p.preferred_playing_handicap ?? player.handicap,
+          } : player));
         }
         setMyProfile((old) => ({
           name: p.display_name || old.name,
@@ -213,6 +242,7 @@ export default function Home() {
           photo: p.avatar_url || "",
         }));
       } catch {}
+      finally { setAuthReady(true); }
     };
     void supabase.auth
       .getSession()
@@ -283,6 +313,9 @@ export default function Home() {
     try {
       if (authMode === "signup") {
         await signUp(authEmail, authPassword, authName);
+        await signOut();
+        setAuthMode("signin");
+        setAuthPassword("");
         setAuthMessage(
           af
             ? "Aansoek ontvang. Gert moet jou nou goedkeur — geen e-pos-skakel nodig nie."
@@ -380,6 +413,69 @@ export default function Home() {
     const index = order.indexOf(hole.number);
     setCurrentHole(order[Math.max(0, index - 1)] - 1);
   };
+  const choosePlayer = (playerId: number, value: string) => {
+    if (value === "guest") {
+      setPlayers((old) => old.map((player) => player.id === playerId ? {
+        ...player,
+        profileId: undefined,
+        isGuest: true,
+        name: af ? `Gas ${player.id}` : `Guest ${player.id}`,
+      } : player));
+      return;
+    }
+    const golfer = registeredGolfers.find((item) => item.id === value);
+    if (!golfer) return;
+    setPlayers((old) => old.map((player) => player.id === playerId ? {
+      ...player,
+      profileId: golfer.id,
+      isGuest: false,
+      name: golfer.display_name,
+      handicap: golfer.preferred_playing_handicap ?? player.handicap,
+    } : player));
+  };
+
+  if (isSupabaseConfigured && (!authReady || !userEmail || membershipStatus !== "approved")) {
+    return (
+      <main className="min-h-dvh auth-gate">
+        <header>
+          <div className="header-inner">
+            <div className="brand"><span><Flag /></span><b>THE PRESS<small>{af ? "Golf. Griewe. Glorie." : "Golf. Grudges. Glory."}</small></b></div>
+            <button className="language-toggle" onClick={() => setLanguage(af ? "en" : "af")}><b>{language.toUpperCase()}</b><span>{af ? "EN" : "AF"}</span></button>
+          </div>
+        </header>
+        <div className="auth-home">
+          <section className="auth-welcome">
+            <p className="eyebrow"><Sparkles /> {af ? "Privaat klubhuis" : "Private clubhouse"}</p>
+            <h1>THE <em>PRESS</em></h1>
+            <p>{af ? "Meld aan om ’n spel te skep, tellings te hou en jou vriende se verskonings permanent op rekord te plaas." : "Sign in to create a game, keep score and put your friends’ excuses permanently on record."}</p>
+          </section>
+          {!authReady ? (
+            <div className="auth-card"><p>{af ? "Ons maak die klubhuis oop…" : "Opening the clubhouse…"}</p></div>
+          ) : userEmail && membershipStatus === "pending" ? (
+            <div className="auth-card waiting-card">
+              <p className="eyebrow"><Sparkles /> {af ? "Aansoek ontvang" : "Application received"}</p>
+              <h2>{af ? "Gert moet jou nog goedkeur" : "Gert still needs to approve you"}</h2>
+              <p>{af ? "Jou plek by die 19de putjie is bespreek. Probeer weer aanmeld nadat Gert jou aansoek goedgekeur het." : "Your seat at the 19th hole is reserved. Sign in again after Gert approves your application."}</p>
+              <Button onClick={async () => { await signOut(); setAuthMessage(""); }}>{af ? "TERUG NA AANMELD" : "BACK TO SIGN IN"}</Button>
+            </div>
+          ) : (
+            <div className="auth-card login-card">
+              <div className="auth-tabs">
+                <button className={authMode === "signin" ? "active" : ""} onClick={() => { setAuthMode("signin"); setAuthMessage(""); }}>{af ? "MELD AAN" : "SIGN IN"}</button>
+                <button className={authMode === "signup" ? "active" : ""} onClick={() => { setAuthMode("signup"); setAuthMessage(""); }}>{af ? "REGISTREER" : "REGISTER"}</button>
+              </div>
+              {authMode === "signup" && <><label>{af ? "Naam" : "Name"}</label><input value={authName} onChange={(e) => setAuthName(e.target.value)} placeholder={af ? "Jou naam" : "Your name"} /></>}
+              <label>E-pos</label><input type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} placeholder="jy@voorbeeld.co.za" />
+              <label>{af ? "Wagwoord" : "Password"}</label><input type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} placeholder={af ? "Minstens 8 karakters" : "At least 8 characters"} />
+              <Button className="next" onClick={submitAuth}>{authMode === "signup" ? (af ? "STUUR AANSOEK" : "SEND APPLICATION") : (af ? "GAAN KLUBHUIS BINNE" : "ENTER THE CLUBHOUSE")}</Button>
+              {authMode === "signup" && <p className="auth-note">{af ? "Net jou naam en e-pos word nou gevra. Jy voltooi jou golfprofiel ná goedkeuring." : "Only your name and email are needed now. Complete your golf profile after approval."}</p>}
+              {authMessage && <p className="auth-message">{authMessage}</p>}
+            </div>
+          )}
+        </div>
+      </main>
+    );
+  }
   return (
     <main className="min-h-dvh pb-24">
       <header>
@@ -606,17 +702,13 @@ export default function Home() {
                 {players.map((p) => (
                   <div className="player" key={p.id}>
                     <span className={`team t${p.team}`}>{p.team}</span>
-                    <input
-                      value={p.name}
-                      onFocus={(e) => e.currentTarget.select()}
-                      onChange={(e) =>
-                        setPlayers(
-                          players.map((x) =>
-                            x.id === p.id ? { ...x, name: e.target.value } : x,
-                          ),
-                        )
-                      }
-                    />
+                    <div className="player-choice">
+                      <select value={p.isGuest ? "guest" : p.profileId} onChange={(e) => choosePlayer(p.id, e.target.value)}>
+                        <option value="guest">{af ? "Gas sonder profiel" : "Guest without profile"}</option>
+                        {registeredGolfers.map((golfer) => <option key={golfer.id} value={golfer.id} disabled={players.some((other) => other.id !== p.id && other.profileId === golfer.id)}>{golfer.display_name}{golfer.nickname ? ` · ${golfer.nickname}` : ""}</option>)}
+                      </select>
+                      {p.isGuest ? <input value={p.name} onFocus={(e) => e.currentTarget.select()} onChange={(e) => setPlayers(players.map((x) => x.id === p.id ? { ...x, name: e.target.value } : x))} placeholder={af ? "Gas se naam" : "Guest name"} /> : <small>{af ? "GOEDGEKEURDE SPELER" : "APPROVED PLAYER"}</small>}
+                    </div>
                     <div className="hcp">
                       <small>{af ? "SPEEL HCP" : "PLAYING HCP"}</small>
                       <button
@@ -676,6 +768,7 @@ export default function Home() {
                       id: Math.max(0, ...old.map((p) => p.id)) + 1,
                       name: `${af ? "Golfer" : "Golfer"} ${old.length + 1}`,
                       handicap: 0,
+                      isGuest: true,
                       team:
                         old.filter((p) => p.team === "A").length <=
                         old.filter((p) => p.team === "B").length
@@ -686,7 +779,7 @@ export default function Home() {
                 }
               >
                 <UserPlus />{" "}
-                {af ? "Voeg nog ’n golfer by" : "Add another golfer"}
+                {af ? "Voeg ’n gas by" : "Add a guest"}
               </button>
               <p className="tip">
                 {af
