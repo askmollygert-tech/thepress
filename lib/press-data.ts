@@ -22,6 +22,54 @@ export async function signOut() {
   if (error) throw error;
 }
 
+export async function getMyProfile() {
+  const db = client();
+  const { data: auth } = await db.auth.getUser();
+  if (!auth.user) throw new Error("Sign in to view your profile.");
+  const { data, error } = await db.from("profiles").select("*").eq("auth_user_id", auth.user.id).single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateMyProfile(input: { displayName: string; nickname?: string; homeClub?: string; funAnswer?: string; avatarUrl?: string }) {
+  const db = client();
+  const { data: auth } = await db.auth.getUser();
+  if (!auth.user) throw new Error("Sign in before saving your profile.");
+  const { data, error } = await db.from("profiles").update({
+    display_name: input.displayName,
+    nickname: input.nickname || null,
+    home_club: input.homeClub || null,
+    fun_answer: input.funAnswer || null,
+    avatar_url: input.avatarUrl || null,
+    updated_at: new Date().toISOString(),
+  }).eq("auth_user_id", auth.user.id).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function searchGolfers(query: string) {
+  const safe = query.trim().replace(/[,%()]/g, "");
+  if (safe.length < 2) return [];
+  const { data, error } = await client().from("profiles")
+    .select("id,display_name,nickname,home_club,avatar_url")
+    .eq("is_guest", false)
+    .or(`display_name.ilike.%${safe}%,nickname.ilike.%${safe}%,home_club.ilike.%${safe}%`)
+    .limit(20);
+  if (error) throw error;
+  return data;
+}
+
+export async function sendFriendRequest(addresseeProfileId: string) {
+  const db = client();
+  const { data: auth } = await db.auth.getUser();
+  if (!auth.user) throw new Error("Sign in before adding a friend.");
+  const { data: me, error: meError } = await db.from("profiles").select("id").eq("auth_user_id", auth.user.id).single();
+  if (meError) throw meError;
+  const { data, error } = await db.from("friendships").insert({ requester_id: me.id, addressee_id: addresseeProfileId }).select().single();
+  if (error) throw error;
+  return data;
+}
+
 export async function createGuestProfile(displayName: string, email?: string, preferredPlayingHandicap?: number) {
   const { data: auth } = await client().auth.getUser();
   if (!auth.user) throw new Error("Sign in before adding a guest golfer.");
@@ -73,4 +121,3 @@ export function subscribeToRound(roundId: string, onChange: () => void) {
     .subscribe();
   return () => { void db.removeChannel(channel); };
 }
-
