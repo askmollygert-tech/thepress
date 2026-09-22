@@ -5,8 +5,8 @@ function client() {
   return supabase;
 }
 
-export async function signUp(email: string, password: string, displayName: string) {
-  const { data, error } = await client().auth.signUp({ email, password, options: { data: { display_name: displayName } } });
+export async function signUp(email: string, password: string, displayName: string, phoneNumber: string) {
+  const { data, error } = await client().auth.signUp({ email, password, options: { data: { display_name: displayName, phone_number: phoneNumber } } });
   if (error) throw error;
   return data;
 }
@@ -43,7 +43,7 @@ export async function getPendingGolfers() {
 
 export async function getApprovedGolfers() {
   const { data, error } = await client().from("profiles")
-    .select("id,display_name,nickname,home_club,preferred_playing_handicap")
+    .select("id,display_name,nickname,home_club,phone_number,preferred_playing_handicap")
     .eq("membership_status", "approved")
     .eq("is_guest", false)
     .order("display_name", { ascending: true })
@@ -66,7 +66,7 @@ export async function getFriendData() {
   const otherIds = [...new Set((links || []).map((link: any) => link.requester_id === me ? link.addressee_id : link.requester_id))];
   if (!otherIds.length) return { me, links: links || [], profiles: [] };
   const { data: profiles, error: profilesError } = await client().from("profiles")
-    .select("id,display_name,nickname,home_club,preferred_playing_handicap")
+    .select("id,display_name,nickname,home_club,phone_number,preferred_playing_handicap")
     .in("id", otherIds);
   if (profilesError) throw profilesError;
   return { me, links: links || [], profiles: profiles || [] };
@@ -74,7 +74,7 @@ export async function getFriendData() {
 
 export async function getMyActiveRound() {
   const { data, error } = await client().from("rounds")
-    .select("id,course_name,starting_hole,format,status,scorer_user_id,round_players(profile_id,team,playing_handicap,profiles(display_name,is_guest))")
+    .select("id,course_name,starting_hole,format,status,scorer_user_id,round_players(profile_id,team,playing_handicap,invite_token,invitation_status,profiles(display_name,is_guest))")
     .eq("status", "active")
     .maybeSingle();
   if (error) throw error;
@@ -85,6 +85,20 @@ export async function answerFriendRequest(friendshipId: string, accept: boolean)
   const { data, error } = await client().from("friendships")
     .update({ status: accept ? "accepted" : "declined", updated_at: new Date().toISOString() })
     .eq("id", friendshipId).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function createGuestRoundInvite(roundId: string, invitedName: string) {
+  const { data: auth } = await client().auth.getUser();
+  if (!auth.user) throw new Error("Sign in first.");
+  const { data, error } = await client().from("round_guest_invites").insert({ round_id: roundId, invited_name: invitedName, invited_by: auth.user.id }).select("token").single();
+  if (error) throw error;
+  return data;
+}
+
+export async function respondToRoundInvite(token: string, accept: boolean) {
+  const { data, error } = await client().rpc("respond_to_round_invite", { invitation_token: token, response: accept ? "accepted" : "declined" });
   if (error) throw error;
   return data;
 }
@@ -153,6 +167,7 @@ export async function createRound(input: {
   const db = client();
   const { data: auth } = await db.auth.getUser();
   if (!auth.user) throw new Error("Sign in before creating a round.");
+  const { data: me } = await db.from("profiles").select("id").eq("auth_user_id", auth.user.id).single();
   const roundId = crypto.randomUUID();
   const { error: roundError } = await db.from("rounds").insert({
     id: roundId,
@@ -162,10 +177,11 @@ export async function createRound(input: {
   if (roundError) throw roundError;
   const { error: playersError } = await db.from("round_players").insert(input.players.map((player) => ({
     round_id: roundId, profile_id: player.profileId, team: player.team, playing_handicap: player.playingHandicap,
-    invitation_status: player.isGuest ? "guest" : "pending",
+    invitation_status: player.profileId === me?.id ? "accepted" : player.isGuest ? "guest" : "pending",
   })));
   if (playersError) throw playersError;
-  return { id: roundId, scorer_user_id: auth.user.id, status: "active" };
+  const { data: invites } = await db.from("round_players").select("profile_id,invite_token,invitation_status").eq("round_id", roundId);
+  return { id: roundId, scorer_user_id: auth.user.id, status: "active", invites: invites || [] };
 }
 
 export async function takeOverScoring(roundId: string) {
