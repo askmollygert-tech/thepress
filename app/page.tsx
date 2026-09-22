@@ -29,7 +29,9 @@ import {
 } from "@/lib/scoring";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 import {
+  approveGolfer,
   getMyProfile,
+  getPendingGolfers,
   searchGolfers,
   sendFriendRequest,
   signIn,
@@ -53,6 +55,12 @@ type Friend = {
   nickname: string;
   club: string;
   initials: string;
+};
+type PendingGolfer = {
+  id: string;
+  display_name: string;
+  email: string;
+  home_club?: string | null;
 };
 const defaultPlayers: Player[] = [
   { id: 1, name: "Golfer 1", handicap: 0, team: "A" },
@@ -144,6 +152,9 @@ export default function Home() {
   const [presses, setPresses] = useState<number[]>([]);
   const [toast, setToast] = useState("");
   const [userEmail, setUserEmail] = useState("");
+  const [membershipStatus, setMembershipStatus] = useState("guest");
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [pendingGolfers, setPendingGolfers] = useState<PendingGolfer[]>([]);
   const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
   const [authName, setAuthName] = useState("");
   const [authEmail, setAuthEmail] = useState("");
@@ -188,6 +199,12 @@ export default function Home() {
       if (!email) return;
       try {
         const p = await getMyProfile();
+        setMembershipStatus(p.membership_status || "pending");
+        setIsAdmin(Boolean(p.is_admin));
+        if (p.is_admin) {
+          const requests = await getPendingGolfers();
+          setPendingGolfers(requests as PendingGolfer[]);
+        }
         setMyProfile((old) => ({
           name: p.display_name || old.name,
           nickname: p.nickname || "",
@@ -267,7 +284,9 @@ export default function Home() {
       if (authMode === "signup") {
         await signUp(authEmail, authPassword, authName);
         setAuthMessage(
-          "Profile created. Check your email if confirmation is required.",
+          af
+            ? "Aansoek ontvang. Gert moet jou nou goedkeur — geen e-pos-skakel nodig nie."
+            : "Application received. Gert must approve you now — no email link needed.",
         );
       } else {
         await signIn(authEmail, authPassword);
@@ -322,6 +341,15 @@ export default function Home() {
             ? "Versoek kon nie stuur nie."
             : "Request could not be sent.",
       );
+    }
+  };
+  const approveApplication = async (id: string) => {
+    try {
+      await approveGolfer(id);
+      setPendingGolfers((old) => old.filter((golfer) => golfer.id !== id));
+      say(af ? "Golfer goedgekeur. Laat die swak verskonings begin." : "Golfer approved. Let the weak excuses begin.");
+    } catch (error) {
+      say(error instanceof Error ? error.message : af ? "Goedkeuring het misluk." : "Approval failed.");
     }
   };
   const goNext = () => {
@@ -936,6 +964,29 @@ export default function Home() {
             {af ? "Jou klubhuis-identiteit" : "Your clubhouse identity"}
           </p>
           <h1 className="setup-title">{af ? "MY PROFIEL" : "MY PROFILE"}</h1>
+          {userEmail && membershipStatus === "pending" && (
+            <div className="connection-card">
+              <Sparkles />
+              <div>
+                <b>{af ? "Jou aansoek wag vir Gert" : "Your application is waiting for Gert"}</b>
+                <p>{af ? "Jy is geregistreer. Sodra Gert jou goedkeur, kan jy golfers soek, vriende byvoeg en aan rondtes deelneem." : "You are registered. Once Gert approves you, you can find golfers, add friends and join rounds."}</p>
+              </div>
+            </div>
+          )}
+          {isAdmin && (
+            <div className="auth-card admin-requests">
+              <p className="eyebrow"><UserCheck /> {af ? "ADMIN · NUWE AANSOEKE" : "ADMIN · NEW APPLICATIONS"}</p>
+              {pendingGolfers.length === 0 ? (
+                <p>{af ? "Geen golfers wag tans by die hek nie." : "No golfers are waiting at the gate."}</p>
+              ) : pendingGolfers.map((golfer) => (
+                <article className="friend-card" key={golfer.id}>
+                  <div className="friend-avatar">{golfer.display_name.slice(0, 2).toUpperCase()}</div>
+                  <div><h3>{golfer.display_name}</h3><p>{golfer.email}{golfer.home_club ? ` · ${golfer.home_club}` : ""}</p></div>
+                  <button onClick={() => void approveApplication(golfer.id)}><UserCheck />{af ? "KEUR GOED" : "APPROVE"}</button>
+                </article>
+              ))}
+            </div>
+          )}
           {!isSupabaseConfigured && (
             <div className="connection-card">
               <Sparkles />
@@ -949,7 +1000,7 @@ export default function Home() {
               </div>
             </div>
           )}
-          <div className="social-tabs">
+          {(!userEmail || membershipStatus === "approved") && <div className="social-tabs">
             <button
               className={profileTab === "me" ? "active" : ""}
               onClick={() => setProfileTab("me")}
@@ -963,8 +1014,8 @@ export default function Home() {
               {af ? "VRIENDE" : "FRIENDS"}
               <span>{friendRequests.length}</span>
             </button>
-          </div>
-          {profileTab === "me" ? (
+          </div>}
+          {(!userEmail || membershipStatus === "approved") && (profileTab === "me" ? (
             <div className="profile-editor">
               <div className="profile-photo-wrap">
                 {myProfile.photo ? (
@@ -1072,7 +1123,7 @@ export default function Home() {
                   ))}
               </div>
             </div>
-          )}
+          ))}
           {isSupabaseConfigured && !userEmail && (
             <div className="auth-card">
               <div className="auth-tabs">
