@@ -52,6 +52,43 @@ export async function getApprovedGolfers() {
   return data;
 }
 
+async function myProfileId() {
+  const me = await getMyProfile();
+  return me.id as string;
+}
+
+export async function getFriendData() {
+  const me = await myProfileId();
+  const { data: links, error } = await client().from("friendships")
+    .select("id,requester_id,addressee_id,status,created_at")
+    .or(`requester_id.eq.${me},addressee_id.eq.${me}`);
+  if (error) throw error;
+  const otherIds = [...new Set((links || []).map((link: any) => link.requester_id === me ? link.addressee_id : link.requester_id))];
+  if (!otherIds.length) return { me, links: links || [], profiles: [] };
+  const { data: profiles, error: profilesError } = await client().from("profiles")
+    .select("id,display_name,nickname,home_club,preferred_playing_handicap")
+    .in("id", otherIds);
+  if (profilesError) throw profilesError;
+  return { me, links: links || [], profiles: profiles || [] };
+}
+
+export async function getMyActiveRound() {
+  const { data, error } = await client().from("rounds")
+    .select("id,course_name,starting_hole,format,status,scorer_user_id,round_players(profile_id,team,playing_handicap,profiles(display_name,is_guest))")
+    .eq("status", "active")
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+export async function answerFriendRequest(friendshipId: string, accept: boolean) {
+  const { data, error } = await client().from("friendships")
+    .update({ status: accept ? "accepted" : "declined", updated_at: new Date().toISOString() })
+    .eq("id", friendshipId).select().single();
+  if (error) throw error;
+  return data;
+}
+
 export async function approveGolfer(profileId: string) {
   const { data, error } = await client().rpc("approve_golfer", { profile_to_approve: profileId });
   if (error) throw error;
@@ -116,17 +153,31 @@ export async function createRound(input: {
   const db = client();
   const { data: auth } = await db.auth.getUser();
   if (!auth.user) throw new Error("Sign in before creating a round.");
-  const { data: round, error: roundError } = await db.from("rounds").insert({
+  const roundId = crypto.randomUUID();
+  const { error: roundError } = await db.from("rounds").insert({
+    id: roundId,
     course_name: input.courseName, scheduled_at: input.scheduledAt || null, starting_hole: input.startingHole,
-    format: input.format, created_by: auth.user.id,
-  }).select().single();
+    format: input.format, created_by: auth.user.id, scorer_user_id: auth.user.id, status: "active",
+  });
   if (roundError) throw roundError;
   const { error: playersError } = await db.from("round_players").insert(input.players.map((player) => ({
-    round_id: round.id, profile_id: player.profileId, team: player.team, playing_handicap: player.playingHandicap,
+    round_id: roundId, profile_id: player.profileId, team: player.team, playing_handicap: player.playingHandicap,
     invitation_status: player.isGuest ? "guest" : "pending",
   })));
   if (playersError) throw playersError;
-  return round;
+  return { id: roundId, scorer_user_id: auth.user.id, status: "active" };
+}
+
+export async function takeOverScoring(roundId: string) {
+  const { data, error } = await client().rpc("take_over_scoring", { target_round_id: roundId });
+  if (error) throw error;
+  return data;
+}
+
+export async function closeRound(roundId: string, status: "complete" | "abandoned") {
+  const { data, error } = await client().rpc("close_press_round", { target_round_id: roundId, final_status: status });
+  if (error) throw error;
+  return data;
 }
 
 export async function saveScore(roundId: string, profileId: string, holeNumber: number, grossScore: number) {
