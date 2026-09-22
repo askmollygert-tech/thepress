@@ -33,12 +33,14 @@ import {
   approveGolfer,
   closeRound,
   createGuestProfile,
+  createGuestRoundInvite,
   createRound,
   getFriendData,
   getMyActiveRound,
   getMyProfile,
   getPendingGolfers,
   searchGolfers,
+  respondToRoundInvite,
   saveScore,
   sendFriendRequest,
   signIn,
@@ -69,6 +71,7 @@ type PendingGolfer = {
   display_name: string;
   email: string;
   home_club?: string | null;
+  phone_number?: string | null;
 };
 type RegisteredGolfer = {
   id: string;
@@ -175,11 +178,14 @@ export default function Home() {
   const [registeredGolfers, setRegisteredGolfers] = useState<RegisteredGolfer[]>([]);
   const [incomingRequests, setIncomingRequests] = useState<IncomingRequest[]>([]);
   const [activeRound, setActiveRound] = useState<{ id: string; scorer_user_id: string; status: string } | null>(null);
+  const [roundInvites, setRoundInvites] = useState<Array<{profile_id:string; invite_token:string; invitation_status:string}>>([]);
+  const [roundInviteToken, setRoundInviteToken] = useState("");
   const [currentUserId, setCurrentUserId] = useState("");
   const [scorecardPhoto, setScorecardPhoto] = useState("");
   const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
   const [authName, setAuthName] = useState("");
   const [authEmail, setAuthEmail] = useState("");
+  const [authPhone, setAuthPhone] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authMessage, setAuthMessage] = useState("");
   const [profileTab, setProfileTab] = useState<"me" | "friends">("me");
@@ -197,6 +203,7 @@ export default function Home() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get("register") === "1") setAuthMode("signup");
+    if (params.get("roundInvite")) setRoundInviteToken(params.get("roundInvite") || "");
   }, []);
   useEffect(() => {
     const saved = localStorage.getItem("the-press-state");
@@ -249,6 +256,7 @@ export default function Home() {
           const openRound = await getMyActiveRound();
           if (openRound) {
             setActiveRound({ id: openRound.id, scorer_user_id: openRound.scorer_user_id, status: openRound.status });
+            setRoundInvites((openRound.round_players || []).map((row: any) => ({ profile_id: row.profile_id, invite_token: row.invite_token, invitation_status: row.invitation_status })));
             setCourse(openRound.course_name);
             setStartingHole(openRound.starting_hole);
             setFormat(openRound.format);
@@ -359,7 +367,8 @@ export default function Home() {
     setAuthMessage("");
     try {
       if (authMode === "signup") {
-        await signUp(authEmail, authPassword, authName);
+        if (!authName.trim() || !authPhone.trim() || !authEmail.trim()) throw new Error(af ? "Vul asseblief jou naam, selfoonnommer en e-posadres in." : "Please enter your name, mobile number and email address.");
+        await signUp(authEmail, authPassword, authName, authPhone);
         await signOut();
         setAuthMode("signin");
         setAuthPassword("");
@@ -456,11 +465,34 @@ export default function Home() {
       setPlayers(resolved);
       const round = await createRound({ courseName: course, startingHole, format, players: resolved.map((player) => ({ profileId: player.profileId!, team: player.team, playingHandicap: player.handicap, isGuest: player.isGuest })) });
       setActiveRound(round);
+      setRoundInvites(round.invites || []);
       setScreen("play");
       setCurrentHole(startingHole - 1);
     } catch (error) {
       say(error instanceof Error && (error.message.includes("only_one_active") || error.message.includes("duplicate key")) ? (af ? "Daar is reeds ’n aktiewe rondte. Voltooi of laat vaar hom eers." : "A round is already active. Complete or abandon it first.") : error instanceof Error ? error.message : "Round could not start.");
     }
+  };
+  const shareRoundInvite = (token: string, name: string, needsRegistration = false) => {
+    const base = `${window.location.origin}/?roundInvite=${encodeURIComponent(token)}${needsRegistration ? "&register=1" : ""}`;
+    const message = af ? `Hallo ${name}! Jy is genooi na ’n rondte op The Press. ${needsRegistration ? "Registreer eers en " : ""}klik hier om die spel te aanvaar: ${base}` : `Hi ${name}! You are invited to a round on The Press. ${needsRegistration ? "Register first and " : ""}click here to accept the game: ${base}`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, "_blank");
+  };
+  const inviteNewPlayer = async () => {
+    if (!activeRound) return;
+    const name = window.prompt(af ? "Wat is die nuwe speler se naam?" : "What is the new player’s name?");
+    if (!name?.trim()) return;
+    try {
+      const invite = await createGuestRoundInvite(activeRound.id, name.trim());
+      shareRoundInvite(invite.token, name.trim(), true);
+    } catch (error) { say(error instanceof Error ? error.message : "Invite could not be created."); }
+  };
+  const respondToInvite = async (accept: boolean) => {
+    try {
+      await respondToRoundInvite(roundInviteToken, accept);
+      setRoundInviteToken("");
+      window.history.replaceState({}, "", window.location.pathname);
+      say(accept ? (af ? "Rondte aanvaar. Sien jou op die eerste bof." : "Round accepted. See you on the first tee.") : (af ? "Rondte geweier." : "Round declined."));
+    } catch (error) { say(error instanceof Error ? error.message : "Invite response failed."); }
   };
   const approveApplication = async (id: string) => {
     try {
@@ -555,6 +587,7 @@ export default function Home() {
                 <button className={authMode === "signup" ? "active" : ""} onClick={() => { setAuthMode("signup"); setAuthMessage(""); }}>{af ? "REGISTREER" : "REGISTER"}</button>
               </div>
               {authMode === "signup" && <><label>{af ? "Naam" : "Name"}</label><input value={authName} onChange={(e) => setAuthName(e.target.value)} placeholder={af ? "Jou naam" : "Your name"} /></>}
+              {authMode === "signup" && <><label>{af ? "Selfoonnommer" : "Mobile number"}</label><input type="tel" value={authPhone} onChange={(e) => setAuthPhone(e.target.value)} placeholder="082 123 4567" /></>}
               <label>E-pos</label><input type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} placeholder="jy@voorbeeld.co.za" />
               <label>{af ? "Wagwoord" : "Password"}</label><input type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} placeholder={af ? "Minstens 8 karakters" : "At least 8 characters"} />
               <Button className="next" onClick={submitAuth}>{authMode === "signup" ? (af ? "STUUR AANSOEK" : "SEND APPLICATION") : (af ? "GAAN KLUBHUIS BINNE" : "ENTER THE CLUBHOUSE")}</Button>
@@ -607,6 +640,7 @@ export default function Home() {
         <button onClick={() => void answerRequest(incomingRequests[0].id, true)}>{af ? "AANVAAR" : "ACCEPT"}</button>
         <button className="ignore" onClick={() => void answerRequest(incomingRequests[0].id, false)}>×</button>
       </div>}
+      {roundInviteToken && <div className="round-invite-pop"><p className="eyebrow"><Flag />{af ? "RONDE-UITNODIGING" : "ROUND INVITATION"}</p><h3>{af ? "Is jy in, of het die moed jou begewe?" : "Are you in, or has courage left you?"}</h3><div><button onClick={() => void respondToInvite(true)}>{af ? "AANVAAR SPEL" : "ACCEPT GAME"}</button><button className="decline" onClick={() => void respondToInvite(false)}>{af ? "WEIER" : "DECLINE"}</button></div></div>}
       {screen === "home" && (
         <div className="wrap home">
           <section className="hero">
@@ -944,6 +978,11 @@ export default function Home() {
             <div><small>{af ? "AMPTELIKE TELLER" : "OFFICIAL SCORER"}</small><b>{activeRound.scorer_user_id === currentUserId ? (af ? "Jy hou telling" : "You are scoring") : (af ? "Iemand anders hou telling" : "Someone else is scoring")}</b></div>
             {activeRound.scorer_user_id !== currentUserId && <button onClick={async () => { try { const round = await takeOverScoring(activeRound.id); setActiveRound(round); say(af ? "Jy het telling oorgeneem." : "You took over scoring."); } catch (error) { say(error instanceof Error ? error.message : "Takeover failed."); } }}>{af ? "VAT OOR" : "TAKE OVER"}</button>}
             <button className="abandon" onClick={async () => { try { await closeRound(activeRound.id, "abandoned"); setActiveRound(null); setScreen("home"); say(af ? "Rondte laat vaar." : "Round abandoned."); } catch (error) { say(error instanceof Error ? error.message : "Could not abandon round."); } }}>{af ? "LAAT VAAR" : "ABANDON"}</button>
+          </div>}
+          {activeRound?.scorer_user_id === currentUserId && <div className="round-invite-tools">
+            <div><b>{af ? "WhatsApp-uitnodigings" : "WhatsApp invitations"}</b><small>{af ? "Stuur elke speler sy persoonlike aanvaar-skakel." : "Send each player their personal acceptance link."}</small></div>
+            {roundInvites.filter((invite) => invite.invitation_status === "pending").map((invite) => { const player = players.find((item) => item.profileId === invite.profile_id); return <button key={invite.invite_token} onClick={() => shareRoundInvite(invite.invite_token, player?.name || (af ? "Golfer" : "Golfer"))}>WhatsApp · {player?.name || (af ? "Speler" : "Player")}</button>; })}
+            <button className="new-player-invite" onClick={() => void inviteNewPlayer()}><UserPlus />{af ? "NOOI IEMAND UIT WHATSAPP-KONTAKTE" : "INVITE FROM WHATSAPP CONTACTS"}</button>
           </div>}
           <div className="score-hero">
             <div>
