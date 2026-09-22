@@ -379,7 +379,11 @@ export default function Home() {
         );
       } else {
         await signIn(authEmail, authPassword);
-        setAuthMessage("Welcome back. The clubhouse remembers you.");
+        setAuthMessage(
+          af
+            ? "Welkom terug. Die klubhuis onthou jou."
+            : "Welcome back. The clubhouse remembers you.",
+        );
       }
     } catch (error) {
       setAuthMessage(
@@ -684,15 +688,6 @@ export default function Home() {
                 af
                   ? "Kampioene, chokers en verskonings"
                   : "Champions, chokers & excuses"
-              }
-            />
-            <Action
-              icon={<Users />}
-              title={af ? "Die gewone verdagtes" : "The usual suspects"}
-              sub={
-                af
-                  ? `${players.length} golfers gestoor`
-                  : `${players.length} golfers saved`
               }
             />
           </section>
