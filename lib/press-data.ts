@@ -31,6 +31,22 @@ export async function getMyProfile() {
   return data;
 }
 
+export async function getPendingGolfers() {
+  const { data, error } = await client().from("profiles")
+    .select("id,display_name,email,home_club,created_at")
+    .eq("membership_status", "pending")
+    .eq("is_guest", false)
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  return data;
+}
+
+export async function approveGolfer(profileId: string) {
+  const { data, error } = await client().rpc("approve_golfer", { profile_to_approve: profileId });
+  if (error) throw error;
+  return data;
+}
+
 export async function updateMyProfile(input: { displayName: string; nickname?: string; homeClub?: string; funAnswer?: string; avatarUrl?: string }) {
   const db = client();
   const { data: auth } = await db.auth.getUser();
@@ -53,6 +69,7 @@ export async function searchGolfers(query: string) {
   const { data, error } = await client().from("profiles")
     .select("id,display_name,nickname,home_club,avatar_url")
     .eq("is_guest", false)
+    .eq("membership_status", "approved")
     .or(`display_name.ilike.%${safe}%,nickname.ilike.%${safe}%,home_club.ilike.%${safe}%`)
     .limit(20);
   if (error) throw error;
