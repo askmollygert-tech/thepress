@@ -195,6 +195,10 @@ export default function Home() {
     photo: "",
   });
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("register") === "1") setAuthMode("signup");
+  }, []);
+  useEffect(() => {
     const saved = localStorage.getItem("the-press-state");
     if (saved) {
       try {
