@@ -29,15 +29,22 @@ import {
 } from "@/lib/scoring";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 import {
+  answerFriendRequest,
   approveGolfer,
-  getApprovedGolfers,
+  closeRound,
+  createGuestProfile,
+  createRound,
+  getFriendData,
+  getMyActiveRound,
   getMyProfile,
   getPendingGolfers,
   searchGolfers,
+  saveScore,
   sendFriendRequest,
   signIn,
   signOut,
   signUp,
+  takeOverScoring,
   updateMyProfile,
 } from "@/lib/press-data";
 
@@ -70,6 +77,7 @@ type RegisteredGolfer = {
   home_club?: string | null;
   preferred_playing_handicap?: number | null;
 };
+type IncomingRequest = { id: string; golfer: RegisteredGolfer };
 const defaultPlayers: Player[] = [
   { id: 1, name: "Gas 1", handicap: 0, team: "A", isGuest: true },
   { id: 2, name: "Gas 2", handicap: 0, team: "A", isGuest: true },
@@ -165,6 +173,10 @@ export default function Home() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [pendingGolfers, setPendingGolfers] = useState<PendingGolfer[]>([]);
   const [registeredGolfers, setRegisteredGolfers] = useState<RegisteredGolfer[]>([]);
+  const [incomingRequests, setIncomingRequests] = useState<IncomingRequest[]>([]);
+  const [activeRound, setActiveRound] = useState<{ id: string; scorer_user_id: string; status: string } | null>(null);
+  const [currentUserId, setCurrentUserId] = useState("");
+  const [scorecardPhoto, setScorecardPhoto] = useState("");
   const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
   const [authName, setAuthName] = useState("");
   const [authEmail, setAuthEmail] = useState("");
@@ -217,6 +229,7 @@ export default function Home() {
       }
       try {
         const p = await getMyProfile();
+        setCurrentUserId(p.auth_user_id || "");
         setMembershipStatus(p.membership_status || "pending");
         setIsAdmin(Boolean(p.is_admin));
         if (p.is_admin) {
@@ -224,9 +237,20 @@ export default function Home() {
           setPendingGolfers(requests as PendingGolfer[]);
         }
         if (p.membership_status === "approved") {
-          const golfers = await getApprovedGolfers();
-          setRegisteredGolfers(golfers as RegisteredGolfer[]);
-          setPlayers((old) => old.map((player, index) => index === 0 && player.isGuest ? {
+          const friendData = await getFriendData();
+          const profiles = friendData.profiles as RegisteredGolfer[];
+          const acceptedIds = new Set(friendData.links.filter((link: any) => link.status === "accepted").map((link: any) => link.requester_id === friendData.me ? link.addressee_id : link.requester_id));
+          setRegisteredGolfers(profiles.filter((golfer) => acceptedIds.has(golfer.id)));
+          setIncomingRequests(friendData.links.filter((link: any) => link.status === "pending" && link.addressee_id === friendData.me).map((link: any) => ({ id: link.id, golfer: profiles.find((golfer) => golfer.id === link.requester_id) })).filter((item: any) => item.golfer));
+          const openRound = await getMyActiveRound();
+          if (openRound) {
+            setActiveRound({ id: openRound.id, scorer_user_id: openRound.scorer_user_id, status: openRound.status });
+            setCourse(openRound.course_name);
+            setStartingHole(openRound.starting_hole);
+            setFormat(openRound.format);
+            setPlayers((openRound.round_players || []).map((row: any, index: number) => ({ id: index + 1, name: row.profiles?.display_name || `Gas ${index + 1}`, handicap: row.playing_handicap, team: row.team, profileId: row.profile_id, isGuest: Boolean(row.profiles?.is_guest) })));
+          }
+          if (!openRound) setPlayers((old) => old.map((player, index) => index === 0 && player.isGuest ? {
             ...player,
             name: p.display_name,
             profileId: p.id,
@@ -252,6 +276,18 @@ export default function Home() {
     });
     return () => data.subscription.unsubscribe();
   }, []);
+  useEffect(() => {
+    if (!userEmail || membershipStatus !== "approved") return;
+    const timer = setInterval(() => {
+      void getFriendData().then((data) => {
+        const profiles = data.profiles as RegisteredGolfer[];
+        const acceptedIds = new Set(data.links.filter((link: any) => link.status === "accepted").map((link: any) => link.requester_id === data.me ? link.addressee_id : link.requester_id));
+        setRegisteredGolfers(profiles.filter((golfer) => acceptedIds.has(golfer.id)));
+        setIncomingRequests(data.links.filter((link: any) => link.status === "pending" && link.addressee_id === data.me).map((link: any) => ({ id: link.id, golfer: profiles.find((golfer) => golfer.id === link.requester_id) })).filter((item: any) => item.golfer));
+      }).catch(() => {});
+    }, 12000);
+    return () => clearInterval(timer);
+  }, [userEmail, membershipStatus]);
   useEffect(() => {
     if (!userEmail || friendSearch.trim().length < 2) {
       setFriendResults(suggestedGolfers);
@@ -299,11 +335,18 @@ export default function Home() {
         : "ALL SQUARE"
       : `${Math.abs(position.difference)} ${af ? "VOOR" : "UP"} · ${af ? "SPAN" : "TEAM"} ${position.difference > 0 ? "A" : "B"}`;
   }, [completedHoles, scores, players, af]);
-  const score = (id: number, n: number) =>
+  const score = (id: number, n: number) => {
+    if (activeRound && activeRound.scorer_user_id !== currentUserId) {
+      say(af ? "Net die amptelike teller kan tellings verander. Druk Vat oor." : "Only the official scorer can change scores. Tap Take over.");
+      return;
+    }
     setScores((old) => ({
       ...old,
       [hole.number]: { ...(old[hole.number] || {}), [id]: Math.max(1, n) },
     }));
+    const player = players.find((item) => item.id === id);
+    if (activeRound && player?.profileId) void saveScore(activeRound.id, player.profileId, hole.number, Math.max(1, n)).catch((error) => say(error instanceof Error ? error.message : "Score could not save."));
+  };
   const say = (s: string) => {
     setToast(s);
     setTimeout(() => setToast(""), 2600);
@@ -336,6 +379,15 @@ export default function Home() {
     const reader = new FileReader();
     reader.onload = () =>
       setMyProfile((old) => ({ ...old, photo: String(reader.result || "") }));
+    reader.readAsDataURL(file);
+  };
+  const addScorecardPhoto = (file?: File) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setScorecardPhoto(String(reader.result || ""));
+      say(af ? "Foto ontvang. Kontroleer die telkaart voordat die rondte begin." : "Photo received. Check the scorecard before starting the round.");
+    };
     reader.readAsDataURL(file);
   };
   const saveSocialProfile = async () => {
@@ -376,6 +428,36 @@ export default function Home() {
       );
     }
   };
+  const refreshFriends = async () => {
+    const data = await getFriendData();
+    const profiles = data.profiles as RegisteredGolfer[];
+    const acceptedIds = new Set(data.links.filter((link: any) => link.status === "accepted").map((link: any) => link.requester_id === data.me ? link.addressee_id : link.requester_id));
+    setRegisteredGolfers(profiles.filter((golfer) => acceptedIds.has(golfer.id)));
+    setIncomingRequests(data.links.filter((link: any) => link.status === "pending" && link.addressee_id === data.me).map((link: any) => ({ id: link.id, golfer: profiles.find((golfer) => golfer.id === link.requester_id) })).filter((item: any) => item.golfer));
+  };
+  const answerRequest = async (id: string, accept: boolean) => {
+    try {
+      await answerFriendRequest(id, accept);
+      await refreshFriends();
+      say(accept ? (af ? "Vriend aanvaar. Nou kan die leuens begin." : "Friend accepted. Let the lies begin.") : (af ? "Versoek geïgnoreer." : "Request ignored."));
+    } catch (error) { say(error instanceof Error ? error.message : "Friend request failed."); }
+  };
+  const startGame = async () => {
+    try {
+      const resolved = await Promise.all(players.map(async (player) => {
+        if (player.profileId) return player;
+        const guest = await createGuestProfile(player.name, undefined, player.handicap);
+        return { ...player, profileId: guest.id };
+      }));
+      setPlayers(resolved);
+      const round = await createRound({ courseName: course, startingHole, format, players: resolved.map((player) => ({ profileId: player.profileId!, team: player.team, playingHandicap: player.handicap, isGuest: player.isGuest })) });
+      setActiveRound(round);
+      setScreen("play");
+      setCurrentHole(startingHole - 1);
+    } catch (error) {
+      say(error instanceof Error && (error.message.includes("only_one_active") || error.message.includes("duplicate key")) ? (af ? "Daar is reeds ’n aktiewe rondte. Voltooi of laat vaar hom eers." : "A round is already active. Complete or abandon it first.") : error instanceof Error ? error.message : "Round could not start.");
+    }
+  };
   const approveApplication = async (id: string) => {
     try {
       await approveGolfer(id);
@@ -385,7 +467,7 @@ export default function Home() {
       say(error instanceof Error ? error.message : af ? "Goedkeuring het misluk." : "Approval failed.");
     }
   };
-  const goNext = () => {
+  const goNext = async () => {
     const missing = players
       .filter((p) => !scores[hole.number]?.[p.id])
       .map((p) => p.name);
@@ -397,6 +479,10 @@ export default function Home() {
     }
     const order = playingOrder(startingHole);
     if (hole.number === order[order.length - 1]) {
+      if (activeRound) {
+        try { await closeRound(activeRound.id, "complete"); setActiveRound(null); }
+        catch (error) { say(error instanceof Error ? error.message : "Round could not close."); return; }
+      }
       setScreen("history");
       say(
         af
@@ -506,10 +592,17 @@ export default function Home() {
               aria-label={af ? "Maak golferprofiel oop" : "Open golfer profile"}
             >
               {userEmail ? userEmail.slice(0, 2).toUpperCase() : "GO"}
+              {incomingRequests.length > 0 && <span className="notification-dot">{incomingRequests.length}</span>}
             </button>
           </div>
         </div>
       </header>
+      {incomingRequests.length > 0 && screen !== "profile" && <div className="friend-pop">
+        <div className="friend-avatar">{incomingRequests[0].golfer.display_name.slice(0,2).toUpperCase()}</div>
+        <div><b>{incomingRequests[0].golfer.display_name}</b><small>{af ? "wil jou golfvriend wees" : "wants to be your golf friend"}</small></div>
+        <button onClick={() => void answerRequest(incomingRequests[0].id, true)}>{af ? "AANVAAR" : "ACCEPT"}</button>
+        <button className="ignore" onClick={() => void answerRequest(incomingRequests[0].id, false)}>×</button>
+      </div>}
       {screen === "home" && (
         <div className="wrap home">
           <section className="hero">
@@ -527,12 +620,12 @@ export default function Home() {
             </p>
             <Button
               onClick={() => {
-                setScreen("setup");
-                setStep(1);
+                if (activeRound) { setScreen("play"); setCurrentHole(startingHole - 1); }
+                else { setScreen("setup"); setStep(1); }
               }}
               className="main-cta"
             >
-              <Plus /> {af ? "BEGIN ’N NUWE SPEL" : "START A NEW GAME"}
+              <Plus /> {activeRound ? (af ? "GAAN VOORT MET AKTIEWE RONDTE" : "CONTINUE ACTIVE ROUND") : (af ? "BEGIN ’N NUWE SPEL" : "START A NEW GAME")}
             </Button>
           </section>
           <section className="action-grid">
@@ -668,19 +761,9 @@ export default function Home() {
                       : "We’ll create the holes, pars and stroke indexes. You confirm everything before play."}
                   </p>
                 </div>
-                <Button
-                  variant="outline"
-                  onClick={() =>
-                    say(
-                      af
-                        ? "Telkaart-skandering is volgende op die afslaantyd."
-                        : "Scorecard scanning is next on the tee sheet.",
-                    )
-                  }
-                >
-                  {af ? "SKANDEER" : "SCAN"}
-                </Button>
+                <label className="scan-button">{af ? "NEEM FOTO" : "TAKE PHOTO"}<input type="file" accept="image/*" capture="environment" onChange={(e) => addScorecardPhoto(e.target.files?.[0])} /></label>
               </div>
+              {scorecardPhoto && <div className="scorecard-review"><img src={scorecardPhoto} alt={af ? "Telkaartfoto" : "Scorecard photo"} /><div><b>{af ? "TELKAART ONTVANG" : "SCORECARD RECEIVED"}</b><p>{af ? "Die foto is gereed vir beeldlesing. Pars en voorgeesyfers moet nog bevestig word voordat julle begin." : "The photo is ready for image reading. Pars and stroke indexes must still be confirmed before play."}</p><button onClick={() => setScorecardPhoto("")}>{af ? "Neem weer" : "Retake"}</button></div></div>}
               <div className="course-preview">
                 <span>18 {af ? "PUTJIES" : "HOLES"}</span>
                 <b>PAR 72</b>
@@ -836,7 +919,7 @@ export default function Home() {
             onClick={() =>
               step < 3
                 ? setStep(step + 1)
-                : (setScreen("play"), setCurrentHole(startingHole - 1))
+                : void startGame()
             }
             className="next"
           >
@@ -853,6 +936,11 @@ export default function Home() {
       )}
       {screen === "play" && hole && (
         <div className="wrap play">
+          {activeRound && <div className="scorer-strip">
+            <div><small>{af ? "AMPTELIKE TELLER" : "OFFICIAL SCORER"}</small><b>{activeRound.scorer_user_id === currentUserId ? (af ? "Jy hou telling" : "You are scoring") : (af ? "Iemand anders hou telling" : "Someone else is scoring")}</b></div>
+            {activeRound.scorer_user_id !== currentUserId && <button onClick={async () => { try { const round = await takeOverScoring(activeRound.id); setActiveRound(round); say(af ? "Jy het telling oorgeneem." : "You took over scoring."); } catch (error) { say(error instanceof Error ? error.message : "Takeover failed."); } }}>{af ? "VAT OOR" : "TAKE OVER"}</button>}
+            <button className="abandon" onClick={async () => { try { await closeRound(activeRound.id, "abandoned"); setActiveRound(null); setScreen("home"); say(af ? "Rondte laat vaar." : "Round abandoned."); } catch (error) { say(error instanceof Error ? error.message : "Could not abandon round."); } }}>{af ? "LAAT VAAR" : "ABANDON"}</button>
+          </div>}
           <div className="score-hero">
             <div>
               <p>{course}</p>
@@ -1105,7 +1193,7 @@ export default function Home() {
               onClick={() => setProfileTab("friends")}
             >
               {af ? "VRIENDE" : "FRIENDS"}
-              <span>{friendRequests.length}</span>
+              <span>{incomingRequests.length}</span>
             </button>
           </div>}
           {(!userEmail || membershipStatus === "approved") && (profileTab === "me" ? (
@@ -1171,6 +1259,14 @@ export default function Home() {
             </div>
           ) : (
             <div className="friends-panel">
+              {incomingRequests.length > 0 && <div className="request-notifications">
+                <p className="friends-label">{af ? "NUWE VRIENDVERSOEKE" : "NEW FRIEND REQUESTS"}</p>
+                {incomingRequests.map((request) => <article className="friend-card" key={request.id}>
+                  <div className="friend-avatar">{request.golfer.display_name.slice(0,2).toUpperCase()}</div>
+                  <div><h3>{request.golfer.display_name}</h3><p>{request.golfer.home_club || (af ? "Klub onbekend" : "Club unknown")}</p></div>
+                  <div className="request-actions"><button onClick={() => void answerRequest(request.id, true)}><UserCheck />{af ? "AANVAAR" : "ACCEPT"}</button><button className="ignore" onClick={() => void answerRequest(request.id, false)}>{af ? "IGNOREER" : "IGNORE"}</button></div>
+                </article>)}
+              </div>}
               <div className="friend-search">
                 <Search />
                 <input
@@ -1295,8 +1391,14 @@ export default function Home() {
         </button>
         <button
           onClick={() => {
-            setScreen("setup");
-            setStep(1);
+            if (activeRound) {
+              setScreen("play");
+              setCurrentHole(startingHole - 1);
+              say(af ? "Maak eers die aktiewe rondte klaar of laat vaar hom." : "Finish or abandon the active round first.");
+            } else {
+              setScreen("setup");
+              setStep(1);
+            }
           }}
           className={screen === "setup" ? "active" : ""}
         >
